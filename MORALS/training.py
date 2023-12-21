@@ -292,7 +292,7 @@ class SequenceTraining:
 
             self.transformer.train()
 
-            num_batches = min(len(self.train_loader))
+            num_batches = len(self.train_loader)
             for inp_seq, out_seq, mask in self.train_loader:
                 optimizer.zero_grad()
                 inp_seq = inp_seq.to(self.device)
@@ -316,7 +316,7 @@ class SequenceTraining:
                 loss_test = 0
                 self.transformer.eval()
 
-                num_batches = min(len(self.test_loader))
+                num_batches = len(self.test_loader)
                 for inp_seq, out_seq, mask in self.train_loader:
                     optimizer.zero_grad()
                     inp_seq = inp_seq.to(self.device)
