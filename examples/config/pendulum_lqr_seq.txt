@@ -10,18 +10,17 @@
     'patience': 50,
     'batch_size': 1024,
     'learning_rate': 0.00025,
-    'seed': 0, 
+    'seed': 42, 
     'experiment': '1x1x1x1x', 
-    'num_layers': 2, 
     'data_dir': 'data/pendulum_lqr5k/',
     'model_dir': 'models/pendulum_lqr5k/',
     'log_dir': 'logs/pendulum_lqr5k/',
     'output_dir': 'output/pendulum_lqr5k/2',
     'input_size': 4,
     'embed_size': 2,
-    'hidden_size': 32,
+    'hidden_size': 16,
     'num_heads': 2,
     'max_sequence_length': 502,
     'num_layers': 2,
-    'mask_ratio': 0.4
+    'mask_ratio': 0.5
 }
