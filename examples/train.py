@@ -1,6 +1,6 @@
-from MORALS.data_utils import DynamicsDataset, LabelsDataset
+from MORALS.data_utils import DynamicsDataset, LabelsDataset, SequenceDataset
 from MORALS.models import *
-from MORALS.training import Training, TrainingConfig
+from MORALS.training import Training, TrainingConfig, SequenceTraining
 
 import numpy as np
 import scipy
@@ -47,7 +47,7 @@ def check_collapse(encoder, dataset):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config_dir',help='Directory of config files',type=str,default='config/')
-    parser.add_argument('--config',help='Config file inside config_dir',type=str,default='bistable.txt')
+    parser.add_argument('--config',help='Config file inside config_dir',type=str,default='pendulum_lqr_seq.txt')
     parser.add_argument('--verbose',help='Print training output',action='store_true')
     parser.add_argument('--collapse',help='Check for collapse',action='store_true')
 
@@ -59,9 +59,9 @@ def main():
         config = eval(f.read())
     
     torch.manual_seed(config["seed"])
+    dynamics_dataset = SequenceDataset(config)
     
-    dynamics_dataset = DynamicsDataset(config)
-    
+    # dynamics_dataset = DynamicsDataset(config)
     
     np.random.seed(config["seed"])
 
@@ -99,7 +99,7 @@ def main():
         'test_labels': labels_test_loader
     }
 
-    trainer = Training(config, loaders, args.verbose)
+    trainer = SequenceTraining(config, loaders, args.verbose)
     experiment = TrainingConfig(config['experiment'])
 
     for i,exp in enumerate(experiment):
@@ -108,7 +108,6 @@ def main():
         trainer.train(config["epochs"], config["patience"], exp)
         trainer.save_logs(suffix =str(i))
         trainer.reset_losses()
-
 
     if args.collapse:
         check_collapse(trainer.encoder, dynamics_train_dataset)

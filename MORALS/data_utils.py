@@ -7,6 +7,66 @@ from MORALS.systems.utils import get_system
 import torch
 import os
 
+class SequenceDataset(Dataset):
+    def __init__(self, config):
+        transformed_sequences = []
+        Xnext = []
+
+        # step = config['step']
+        # subsample = config['subsample']
+        system = get_system(config['system'], config['high_dims'])
+        print("Getting data for: ",system.name)
+
+        raw_sequences = os.listdir(config['data_dir'])
+        for f in tqdm(raw_sequences):
+            data = np.loadtxt(os.path.join(config['data_dir'], f), delimiter=',')
+            transformed_sequences.append(system.transform(data))
+        self.sequences = np.stack(transformed_sequences)
+
+        self.mask_ratio = config[mask_ratio]
+        
+        # Normalize the data
+        # if config['use_limits']:
+        #     raise NotImplementedError
+        # else:
+        #     # Get bounds from the max of both Xt and Xnext
+        #     self.X_min = np.min(np.concatenate((self.Xt, self.Xnext), axis=0), axis=0)
+        #     self.X_max = np.max(np.concatenate((self.Xt, self.Xnext), axis=0), axis=0)
+
+        # for i in range(self.X_min.shape[0]):
+        #     if np.abs(self.X_min[i] - self.X_max[i]) < 1e-6:
+        #         print("Warning: X_min and X_max are the same for dimension ", i)
+        #         self.X_min[i] -= 1
+        #         self.X_max[i] += 1
+        
+        # self.Xt = (self.Xt - self.X_min) / (self.X_max - self.X_min)
+        # self.Xnext = (self.Xnext - self.X_min) / (self.X_max - self.X_min)
+
+        # # If model_dir does nto exist, create it
+        # if not os.path.exists(config['model_dir']):
+        #     os.makedirs(config['model_dir'])
+
+        # # Write the normalization parameters to a file
+        # np.savetxt(os.path.join(config['model_dir'], 'X_min.txt'), self.X_min, delimiter=',')
+        # np.savetxt(os.path.join(config['model_dir'], 'X_max.txt'), self.X_max, delimiter=',')
+
+        # # Convert to torch tensors
+        self.sequences = torch.from_numpy(self.sequences).float()
+        self.sequence_length = self.sequences.shape[1]
+
+    def __len__(self):
+        return len(self.sequences)
+
+    def __getitem__(self, idx):
+        sequence = self.sequences[idx]
+        mask = torch.ones(*sequence.shape[:-1], 1)
+        num_tokens_to_mask = int(self.sequence_length * self.mask_ratio)
+        mask_indices = np.random.choice(self.sequence_length, num_tokens_to_mask, replace=False)
+        mask[mask_indices] = 0.
+        in_sequence = sequence*mask
+        out_sequence = sequence*(1-mask)
+        return in_sequence, out_sequence, (1-mask).squeeze(-1)
+
 class DynamicsDataset(Dataset):
     def __init__(self, config):
         Xt = []

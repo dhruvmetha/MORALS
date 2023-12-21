@@ -226,3 +226,123 @@ class Training:
             
             if self.verbose:
                 print('Epoch [{}/{}], Train Loss: {:.4f}, Test Loss: {:.4f}'.format(epoch + 1, epochs, epoch_train_loss, epoch_test_loss))
+
+
+class SequenceTraining:
+    def __init__(self, config, loaders, verbose):
+        self.transformer = MaskedTransformer(config)
+        self.verbose = bool(verbose)
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print("Device: ", self.device)
+
+        self.transformer.to(self.device)
+
+        self.criterion = nn.MSELoss(reduction='none')
+
+        self.lr = config["learning_rate"]
+
+        self.model_dir = config["model_dir"]
+        self.log_dir = config["log_dir"]
+
+        self.train_loader = loaders['train_dynamics']
+        self.test_loader = loaders['test_dynamics']
+
+        self.reset_losses()
+
+    def save_models(self):
+        torch.save(self.transformer, os.path.join(self.model_dir, 'encoder.pt'))
+    
+    def save_logs(self, suffix):
+        if not os.path.exists(self.log_dir):
+            os.makedirs(self.log_dir)
+        
+        with open(os.path.join(self.log_dir, 'train_losses_' + suffix + '.pkl'), 'wb') as f:
+            pickle.dump(self.train_losses, f)
+        
+        with open(os.path.join(self.log_dir, 'test_losses_' + suffix + '.pkl'), 'wb') as f:
+            pickle.dump(self.test_losses, f)
+    
+    def reset_losses(self):
+        self.train_losses = {'loss': [], 'loss_total': []}
+        self.test_losses = {'loss': [], 'loss_total': []}
+
+    def dynamics_losses(self, forward_pass, weight):
+        x_t, x_tau, x_t_pred, z_tau, z_tau_pred, x_tau_pred_dyn = forward_pass
+
+        loss_ae1 = self.dynamics_criterion(x_t, x_t_pred)
+        loss_ae2 = self.dynamics_criterion(x_tau, x_tau_pred_dyn)
+        loss_dyn = self.dynamics_criterion(z_tau_pred, z_tau)
+        loss_total = loss_ae1 * weight[0] + loss_ae2 * weight[1] + loss_dyn * weight[2]
+        return loss_ae1, loss_ae2, loss_dyn, loss_total
+
+    def train(self, epochs=1000, patience=50, weight=[1,1,1,0]):
+        '''
+        Function that trains all the models with all the losses and weight.
+        It will stop if the test loss does not improve for "patience" epochs.
+        '''
+        
+        optimizer = torch.optim.Adam(self.transformer.parameters(), lr=self.lr)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, threshold=0.001, patience=patience, verbose=True)
+        # dataloader = 
+        for epoch in tqdm(range(epochs)):
+            loss_train = 0
+            epoch_train_loss = 0
+            epoch_test_loss  = 0
+
+            self.transformer.train()
+
+            num_batches = min(len(self.train_loader))
+            for inp_seq, out_seq, mask in self.train_loader:
+                optimizer.zero_grad()
+                inp_seq = inp_seq.to(self.device)
+                mask = mask.to(self.device)
+
+                out_seq = self.transformer(inp_seq)
+                loss = torch.sum(self.criterion(inp_seq, out_seq), axis=-1)
+                loss = torch.sum(loss * mask) / torch.sum(mask)
+                loss.backward()
+                optimizer.step()
+
+                loss_train += loss.item()
+                epoch_train_loss += loss.item()
+
+            epoch_train_loss /= num_batches
+
+            self.train_losses['loss'].append(loss_train / num_batches)
+            self.train_losses['loss_total'].append(epoch_train_loss)
+
+            with torch.no_grad():
+                loss_test = 0
+                self.transformer.eval()
+
+                num_batches = min(len(self.test_loader))
+                for inp_seq, out_seq, mask in self.train_loader:
+                    optimizer.zero_grad()
+                    inp_seq = inp_seq.to(self.device)
+                    mask = mask.to(self.device)
+
+                    out_seq = self.transformer(inp_seq)
+
+                    loss = torch.sum(self.criterion(inp_seq, out_seq), axis=-1)
+                    loss = torch.sum(loss * mask) / torch.sum(mask)
+
+                    loss_test += loss.item()
+                    epoch_test_loss += loss.item()
+
+                epoch_test_loss /= num_batches
+
+                self.test_losses['loss'].append(loss_test / num_batches)
+                self.test_losses['loss_total'].append(epoch_test_loss)
+                
+            scheduler.step(epoch_test_loss)
+            
+            if epoch >= patience:
+                if np.mean(self.test_losses['loss_total'][-patience:]) > np.mean(self.test_losses['loss_total'][-patience-1:-1]):
+                    if self.verbose:
+                        print("Early stopping")
+                    break
+            
+            if self.verbose:
+                print('Epoch [{}/{}], Train Loss: {:.4f}, Test Loss: {:.4f}'.format(epoch + 1, epochs, epoch_train_loss, epoch_test_loss))
+

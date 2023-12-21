@@ -1,5 +1,6 @@
+import torch
 from torch import nn
-
+import math
 # TODO: Separate parameters for each model?
 
 class Encoder(nn.Module):
@@ -86,3 +87,59 @@ class LatentDynamics(nn.Module):
     def forward(self, x):
         x = self.dynamics(x)
         return x
+
+
+class MaskedTransformer(nn.Module):
+    def __init__(self, config):
+        super(MaskedTransformer, self).__init__()
+
+        input_size = config['input_size']
+        embed_size = config['embed_size']
+        hidden_size = config['hidden_size']
+        num_heads = config['num_heads']
+        max_sequence_length = config['max_sequence_length']
+        num_layers = config['num_layers']
+        
+        self.batch_first = True
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.max_sequence_length = max_sequence_length
+
+        self.linear_in = nn.Sequential(nn.Linear(input_size, 16), nn.Linear(16, 2))  # removed embed_size // 2 for no cnn
+
+        self.positonal_embedding = PositionalEncoding(embed_size, max_len=max_sequence_length)
+
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model=embed_size, nhead=num_heads,
+                                                        dim_feedforward=hidden_size, batch_first=self.batch_first)
+        self.encoder = nn.TransformerEncoder(self.encoder_layer, num_layers)
+        self.activation = nn.ReLU()
+        self.dropout = nn.Dropout(0.2)
+        self.out = nn.Sequential(nn.Linear(embed_size, 16), nn.Linear(16, input_size))
+
+    def forward(self, lin_input):
+        
+        x = self.linear_in(lin_input)
+        x = self.positonal_embedding(x)
+        x = self.encoder(x)
+        x = self.activation(x)
+        x = self.out(x)
+        return x
+
+
+class PositionalEncoding(nn.Module):
+
+    def __init__(self, d_model: int, dropout: float = 0.0, max_len: int = 5000):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(max_len, 1, d_model)
+        pe[:, 0, 0::2] = torch.sin(position * div_term)
+        pe[:, 0, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        x = x + self.pe[:x.size(1)].permute(1, 0, 2)
+        return self.dropout(x)
+
