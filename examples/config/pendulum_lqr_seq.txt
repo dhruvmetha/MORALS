@@ -19,7 +19,7 @@
     'output_dir': 'output/pendulum_lqr5k/2',
     'input_size': 4,
     'embed_size': 2,
-    'hidden_size': 16,
+    'hidden_size': 32,
     'num_heads': 2,
     'max_sequence_length': 502,
     'num_layers': 2,

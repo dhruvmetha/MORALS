@@ -9,6 +9,7 @@ import os
 
 class SequenceDataset(Dataset):
     def __init__(self, config):
+        raw_sequences = []
         transformed_sequences = []
         Xnext = []
 
@@ -17,11 +18,13 @@ class SequenceDataset(Dataset):
         system = get_system(config['system'], config['high_dims'])
         print("Getting data for: ",system.name)
 
-        raw_sequences = os.listdir(config['data_dir'])
-        for f in tqdm(raw_sequences):
+        raw_sequence_files = os.listdir(config['data_dir'])
+        for f in tqdm(raw_sequence_files):
             data = np.loadtxt(os.path.join(config['data_dir'], f), delimiter=',')
+            raw_sequences.append(data)
             transformed_sequences.append(system.transform(data))
         self.sequences = np.stack(transformed_sequences)
+        self.raw_sequences = np.stack(raw_sequences)
 
         self.mask_ratio = config['mask_ratio']
         
@@ -52,6 +55,7 @@ class SequenceDataset(Dataset):
 
         # # Convert to torch tensors
         self.sequences = torch.from_numpy(self.sequences).float()
+        self.raw_sequences = torch.from_numpy(self.raw_sequences).float()
         self.sequence_length = self.sequences.shape[1]
 
     def __len__(self):
@@ -59,13 +63,14 @@ class SequenceDataset(Dataset):
 
     def __getitem__(self, idx):
         sequence = self.sequences[idx]
+        raw_sequence = self.raw_sequences[idx]
         mask = torch.ones(*sequence.shape[:-1], 1)
         num_tokens_to_mask = int(self.sequence_length * self.mask_ratio)
         mask_indices = np.random.choice(self.sequence_length, num_tokens_to_mask, replace=False)
         mask[mask_indices] = 0.
         in_sequence = sequence*mask
         out_sequence = sequence*(1-mask)
-        return in_sequence, out_sequence, (1-mask).squeeze(-1)
+        return in_sequence, out_sequence, (1-mask).squeeze(-1), sequence, raw_sequence
 
 class DynamicsDataset(Dataset):
     def __init__(self, config):

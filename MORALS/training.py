@@ -4,6 +4,7 @@ import pickle
 import numpy as np
 from torch import nn
 from tqdm import tqdm
+from matplotlib import pyplot as plt
 from MORALS.models import *
 
 class TrainingConfig:
@@ -267,15 +268,6 @@ class SequenceTraining:
         self.train_losses = {'loss': [], 'loss_total': []}
         self.test_losses = {'loss': [], 'loss_total': []}
 
-    def dynamics_losses(self, forward_pass, weight):
-        x_t, x_tau, x_t_pred, z_tau, z_tau_pred, x_tau_pred_dyn = forward_pass
-
-        loss_ae1 = self.dynamics_criterion(x_t, x_t_pred)
-        loss_ae2 = self.dynamics_criterion(x_tau, x_tau_pred_dyn)
-        loss_dyn = self.dynamics_criterion(z_tau_pred, z_tau)
-        loss_total = loss_ae1 * weight[0] + loss_ae2 * weight[1] + loss_dyn * weight[2]
-        return loss_ae1, loss_ae2, loss_dyn, loss_total
-
     def train(self, epochs=1000, patience=50, weight=[1,1,1,0]):
         '''
         Function that trains all the models with all the losses and weight.
@@ -293,7 +285,7 @@ class SequenceTraining:
             self.transformer.train()
 
             num_batches = len(self.train_loader)
-            for inp_seq, out_seq, mask in self.train_loader:
+            for inp_seq, out_seq, mask, _, _ in self.train_loader:
                 optimizer.zero_grad()
                 inp_seq = inp_seq.to(self.device)
                 mask = mask.to(self.device)
@@ -317,12 +309,23 @@ class SequenceTraining:
                 self.transformer.eval()
 
                 num_batches = len(self.test_loader)
-                for inp_seq, out_seq, mask in self.train_loader:
+                for idx, (inp_seq, out_seq, mask, true_seq, raw_seq) in enumerate(self.test_loader):
                     optimizer.zero_grad()
                     inp_seq = inp_seq.to(self.device)
+                    true_seq = true_seq.to(self.device)
                     mask = mask.to(self.device)
 
                     out_seq = self.transformer(inp_seq)
+
+                    if idx == 0:
+                        latent = self.transformer.get_latent_embeddings(true_seq).cpu()
+                        fig, ax = plt.subplots(1, 2)
+                        ax[0].plot(raw_seq[0, :, 0], raw_seq[0, :, 1], label='true')
+                        ax[0].set_title("true")
+                        ax[1].plot(latent[0, :, 0], latent[0, :, 1], label='pred')
+                        ax[1].set_title("latent")
+                        # ax.legend()
+                        plt.show()
 
                     loss = torch.sum(self.criterion(inp_seq, out_seq), axis=-1)
                     loss = torch.sum(loss * mask) / torch.sum(mask)

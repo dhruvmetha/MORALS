@@ -125,6 +125,9 @@ class MaskedTransformer(nn.Module):
         x = self.out(x)
         return x
 
+    def get_latent_embeddings(self, lin_input):
+        return self.linear_in(lin_input)
+
 
 class PositionalEncoding(nn.Module):
 
