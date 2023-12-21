@@ -23,7 +23,7 @@ class SequenceDataset(Dataset):
             transformed_sequences.append(system.transform(data))
         self.sequences = np.stack(transformed_sequences)
 
-        self.mask_ratio = config[mask_ratio]
+        self.mask_ratio = config['mask_ratio']
         
         # Normalize the data
         # if config['use_limits']:
