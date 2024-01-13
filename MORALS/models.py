@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 import math
+from torch.nn import functional as F
 # TODO: Separate parameters for each model?
 
 class Encoder(nn.Module):
@@ -105,7 +106,10 @@ class MaskedTransformer(nn.Module):
         self.num_layers = num_layers
         self.max_sequence_length = max_sequence_length
 
-        self.linear_in = nn.Sequential(nn.Linear(input_size, 16), nn.Linear(16, 2))  # removed embed_size // 2 for no cnn
+        # embed_size = 2, low_dims
+
+        # self.linear_in = nn.Sequential(nn.Linear(input_size, 128), nn.Tanh(), nn.Linear(128, 32),  nn.Tanh(), nn.Linear(32, embed_size))  # removed embed_size // 2 for no cnn
+        self.linear_in = nn.Sequential(nn.Linear(input_size, 8), nn.Linear(8, embed_size))  # removed embed_size // 2 for no cnn
 
         self.positonal_embedding = PositionalEncoding(embed_size, max_len=max_sequence_length)
 
@@ -114,19 +118,27 @@ class MaskedTransformer(nn.Module):
         self.encoder = nn.TransformerEncoder(self.encoder_layer, num_layers)
         self.activation = nn.ReLU()
         self.dropout = nn.Dropout(0.2)
-        self.out = nn.Sequential(nn.Linear(embed_size, 16), nn.Linear(16, input_size))
+
+        # Classification head
+        # self.fc_classification = nn.Linear(latent_dim, output_dim)
+
+        # self.linear_out = nn.Sequential(nn.Linear(embed_size, 32), nn.Tanh(), nn.Linear(32, 128), nn.Tanh(), nn.Linear(128, input_size))
+        self.linear_out = nn.Sequential(nn.Linear(embed_size, 8), nn.Linear(8, input_size))
+
+    def forward_transformer_enc(self, lin_input):
+        x = self.get_latent_embeddings(lin_input) # encoder
+        x = self.positonal_embedding(x)
+        x = self.encoder(x) # dynamics
+        return x
 
     def forward(self, lin_input):
-        
-        x = self.linear_in(lin_input)
-        x = self.positonal_embedding(x)
-        x = self.encoder(x)
-        x = self.activation(x)
-        x = self.out(x)
+        x = self.forward_transformer_enc(lin_input)
+        # x = self.activation(x)
+        x = self.linear_out(x) # decoder
         return x
 
     def get_latent_embeddings(self, lin_input):
-        return self.linear_in(lin_input)
+        return self.linear_in(lin_input) # encoder
 
 
 class PositionalEncoding(nn.Module):
@@ -145,4 +157,70 @@ class PositionalEncoding(nn.Module):
     def forward(self, x):
         x = x + self.pe[:x.size(1)].permute(1, 0, 2)
         return self.dropout(x)
+
+
+class NewMaskedTransformer(nn.Module):
+    def __init__(self, config):
+        super(NewMaskedTransformer, self).__init__()
+
+        input_size = config['input_size']
+        embed_size = config['embed_size']
+        hidden_size = config['hidden_size']
+        num_heads = config['num_heads']
+        max_sequence_length = config['max_sequence_length']
+        num_layers = config['num_layers']
+        
+        self.batch_first = True
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.max_sequence_length = max_sequence_length
+
+        # embed_size = 2, low_dims
+
+        # self.linear_in = nn.Sequential(nn.Linear(input_size, 128), nn.Tanh(), nn.Linear(128, 32),  nn.Tanh(), nn.Linear(32, embed_size))  # removed embed_size // 2 for no cnn
+        self.positonal_embedding = PositionalEncoding(input_size, max_len=max_sequence_length)
+
+        self.encoder = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model=input_size, nhead=num_heads,
+                                             dim_feedforward=hidden_size, batch_first=self.batch_first),
+                                            num_layers) # in 4 and gives out 4
+        
+        
+        self.linear_in = nn.Sequential(nn.Linear(input_size, embed_size), nn.Tanh())
+
+        self.temporal_fc = nn.Sequential(nn.Linear(embed_size, embed_size), nn.Tanh())
+
+        # Decoder
+        self.decoder = nn.TransformerDecoder(
+            nn.TransformerDecoderLayer(d_model=embed_size, nhead=num_heads),
+            num_layers=num_layers
+        )
+
+        self.linear_out =nn.Sequential(nn.Linear(embed_size, input_size)) # reconstruction
+        self.tanh_activation = nn.Tanh()
+        
+        # self.linear_out = nn.Sequential(nn.Linear(embed_size, 8), nn.Linear(8, input_size))
+        
+        self.activation = nn.ReLU()
+        self.dropout = nn.Dropout(0.2)
+
+        
+
+    def forward(self, lin_input):
+        pos_x = self.positonal_embedding(lin_input) # 4-dim
+        enc_x = self.encoder(pos_x) # mu, log_var
+        z_t = self.linear_in(enc_x)
+        # print(z_t.shape, lin_input.shape) 
+        dec_z = self.decoder(z_t.unsqueeze(1).repeat(1, lin_input.size(1), 1))
+        x_pred = self.linear_out(dec_z)
+        return x_pred
+
+    def get_latent_embeddings(self, lin_input):
+
+        x = self.positonal_embedding(lin_input) # 4-dim
+        # x = self.get_latent_embeddings(lin_input) # encoder
+        x = self.encoder(x) # mu, log_var
+        # x = self.tanh_activation(x)
+        z_t = self.linear_in(x)
+
+        return z_t
 

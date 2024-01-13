@@ -59,19 +59,27 @@ def main():
         config = eval(f.read())
     
     torch.manual_seed(config["seed"])
-    dynamics_dataset = SequenceDataset(config)
+    sequence_dataset = SequenceDataset(config)
+    sequence_length = sequence_dataset.max_sequence_length
     
-    # dynamics_dataset = DynamicsDataset(config)
     
     np.random.seed(config["seed"])
 
+    sequence_train_size = int(0.8*len(sequence_dataset))
+    sequence_test_size = len(sequence_dataset) - sequence_train_size
+    sequence_train_dataset, sequence_test_dataset = torch.utils.data.random_split(sequence_dataset, [sequence_train_size, sequence_test_size])
+    sequence_train_loader = DataLoader(sequence_train_dataset, batch_size=config["batch_size"], shuffle=True)
+    sequence_test_loader = DataLoader(sequence_test_dataset, batch_size=config["batch_size"], shuffle=False)
+
+    dynamics_dataset = DynamicsDataset(config)
     dynamics_train_size = int(0.8*len(dynamics_dataset))
     dynamics_test_size = len(dynamics_dataset) - dynamics_train_size
     dynamics_train_dataset, dynamics_test_dataset = torch.utils.data.random_split(dynamics_dataset, [dynamics_train_size, dynamics_test_size])
     dynamics_train_loader = DataLoader(dynamics_train_dataset, batch_size=config["batch_size"], shuffle=True)
-    dynamics_test_loader = DataLoader(dynamics_test_dataset, batch_size=config["batch_size"], shuffle=True)
+    dynamics_test_loader = DataLoader(dynamics_test_dataset, batch_size=config["batch_size"], shuffle=False)
 
-    if "labels_fname" in config.keys(): 
+
+    if False and "labels_fname" in config.keys(): 
         labels_dataset = LabelsDataset(config)
         labels_train_size = int(0.8 * len(labels_dataset))
         labels_test_size = len(labels_dataset) - labels_train_size
@@ -79,39 +87,50 @@ def main():
         labels_train_loader = DataLoader(labels_train_dataset, batch_size=config["batch_size"], shuffle=True, collate_fn=labels_dataset.collate_fn)
         labels_test_loader = DataLoader(labels_test_dataset, batch_size=config["batch_size"], shuffle=True, collate_fn=labels_dataset.collate_fn)
     else:
-        labels_train_loader = dynamics_train_loader
-        labels_test_loader = dynamics_test_loader
+        labels_train_loader = sequence_train_loader
+        labels_test_loader = sequence_test_loader
 
 
     if args.verbose:
-        print("Train size: ", len(dynamics_train_dataset))
-        print("Test size: ", len(dynamics_test_dataset))
+        print("Train size: ", len(sequence_train_dataset))
+        print("Test size: ", len(sequence_test_dataset))
 
     # loaders = {
-    #     'train_dynamics': dynamics_train_loader,
-    #     'test_dynamics': dynamics_test_loader
+    #     'train_dynamics': sequence_train_loader,
+    #     'test_dynamics': sequence_test_loader
     # }
     # if "labels_fname" in config.keys(): 
     loaders = {
-        'train_dynamics': dynamics_train_loader,
-        'test_dynamics': dynamics_test_loader,
-        'train_labels': labels_train_loader,
-        'test_labels': labels_test_loader
+        'train_sequence': sequence_train_loader,
+        'test_sequence': sequence_test_loader,
+        'dynamics_train': dynamics_train_loader,
+        'dynamics_test': dynamics_test_loader,
     }
 
+    config['max_sequence_length'] = sequence_length
     trainer = SequenceTraining(config, loaders, args.verbose)
     experiment = TrainingConfig(config['experiment'])
 
-    for i,exp in enumerate(experiment):
-        if args.verbose:
-            print("Training loss weights: ", exp)
-        trainer.train(config["epochs"], config["patience"], exp)
-        trainer.save_logs(suffix =str(i))
+    if config.get('train_sequence', True):
+        trainer.train(config["epochs"], config["patience"])
+        trainer.save_logs(suffix ="sequence")
         trainer.reset_losses()
+        if args.collapse:
+            check_collapse(trainer.encoder, sequence_train_dataset)
+        trainer.save_models()
+    else:
+        trainer.load_seq_model()
 
-    if args.collapse:
-        check_collapse(trainer.encoder, dynamics_train_dataset)
-    trainer.save_models()    
+    # if config.get('train_dynamics', True):
+    #     trainer.train_dynamics_model(config)
+    #     trainer.save_logs(suffix ='latent_dynamics')
+    #     trainer.reset_losses()
+    #     trainer.save_models()
+    # else:
+    #     pass
+    #     trainer.load_dyn_model()
+
+    trainer.make_plots()
 
 if __name__ == "__main__":
     main()

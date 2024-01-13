@@ -11,66 +11,93 @@ class SequenceDataset(Dataset):
     def __init__(self, config):
         raw_sequences = []
         transformed_sequences = []
-        Xnext = []
+        self.labels = []
+        self.true_sequence_length = []
 
         # step = config['step']
-        # subsample = config['subsample']
+        subsample = config['subsample']
         system = get_system(config['system'], config['high_dims'])
         print("Getting data for: ",system.name)
 
+        labels = np.loadtxt(config['labels_fname'], delimiter=',', dtype=str)
+        success_files = []
+        failure_files = []
+        labels_dict = {}
+        for i in range(len(labels)):
+            labels_dict[labels[i,0]] = int(labels[i,1])
+            if int(labels[i,1]) == 1:
+                success_files.append(labels[i,0])
+            else:
+                failure_files.append(labels[i,0])
+
+        print(len(failure_files), len(success_files))
+
+        first_ten = []
         raw_sequence_files = os.listdir(config['data_dir'])
+        for_norm = len(raw_sequence_files) 
         for f in tqdm(raw_sequence_files):
             data = np.loadtxt(os.path.join(config['data_dir'], f), delimiter=',')
-            raw_sequences.append(data)
-            transformed_sequences.append(system.transform(data))
-        self.sequences = np.stack(transformed_sequences)
-        self.raw_sequences = np.stack(raw_sequences)
+            
+            indices = np.arange(data.shape[0])
+            subsampled_indices = indices % subsample == 0
+            subsampled_data_untransformed = data[subsampled_indices]
+            self.true_sequence_length.append(subsampled_data_untransformed.shape[0])
+            # all_max_val.append(subsampled_data_untransformed)
+            # all_min_val.append(np.min(subsampled_data_untransformed, axis=0))
+            transformed_sequences.append(system.transform(subsampled_data_untransformed))
+            first_ten.append(system.transform(subsampled_data_untransformed))
+            try:
+                self.labels.append(labels_dict[f])
+            except KeyError:
+                print("No label found for ", f)
+                self.labels.append(0)
+        
+        first_ten = np.concatenate(first_ten, axis=0)
+        max_val = np.max(first_ten, axis=0)
+        min_val = np.min(first_ten, axis=0)
+        padded_transformed_sequences = []
+        max_sequence_len = max(self.true_sequence_length)
+        for seq in tqdm(transformed_sequences):
+            # new_seq = seq
+            new_seq = ((seq - min_val)/(max_val-min_val))
+            if len(seq) < max_sequence_len:
+                padding_len = max_sequence_len - len(seq)
+                new_seq = np.concatenate([new_seq, np.zeros((padding_len, seq.shape[-1]))], axis=0)
+            padded_transformed_sequences.append(new_seq)
 
+        self.sequences = np.stack(padded_transformed_sequences)
         self.mask_ratio = config['mask_ratio']
-        
-        # Normalize the data
-        # if config['use_limits']:
-        #     raise NotImplementedError
-        # else:
-        #     # Get bounds from the max of both Xt and Xnext
-        #     self.X_min = np.min(np.concatenate((self.Xt, self.Xnext), axis=0), axis=0)
-        #     self.X_max = np.max(np.concatenate((self.Xt, self.Xnext), axis=0), axis=0)
 
-        # for i in range(self.X_min.shape[0]):
-        #     if np.abs(self.X_min[i] - self.X_max[i]) < 1e-6:
-        #         print("Warning: X_min and X_max are the same for dimension ", i)
-        #         self.X_min[i] -= 1
-        #         self.X_max[i] += 1
-        
-        # self.Xt = (self.Xt - self.X_min) / (self.X_max - self.X_min)
-        # self.Xnext = (self.Xnext - self.X_min) / (self.X_max - self.X_min)
+        # If model_dir does nto exist, create it
+        if not os.path.exists(config['model_dir']):
+            os.makedirs(config['model_dir'])
 
-        # # If model_dir does nto exist, create it
-        # if not os.path.exists(config['model_dir']):
-        #     os.makedirs(config['model_dir'])
-
-        # # Write the normalization parameters to a file
-        # np.savetxt(os.path.join(config['model_dir'], 'X_min.txt'), self.X_min, delimiter=',')
-        # np.savetxt(os.path.join(config['model_dir'], 'X_max.txt'), self.X_max, delimiter=',')
+        # Write the normalization parameters to a file
+        np.savetxt(os.path.join(config['model_dir'], 'min_val.txt'), min_val, delimiter=',')
+        np.savetxt(os.path.join(config['model_dir'], 'max_val.txt'), max_val, delimiter=',')
 
         # # Convert to torch tensors
         self.sequences = torch.from_numpy(self.sequences).float()
-        self.raw_sequences = torch.from_numpy(self.raw_sequences).float()
-        self.sequence_length = self.sequences.shape[1]
+        # self.raw_sequences = torch.from_numpy(self.raw_sequences).float()
+        self.max_sequence_length = max_sequence_len
+        self.true_sequence_length = np.array(self.true_sequence_length)
+        self.true_sequence_length = torch.from_numpy(self.true_sequence_length).long()
+        self.labels = np.array(self.labels)
+        self.labels = torch.from_numpy(self.labels).long()
 
     def __len__(self):
         return len(self.sequences)
 
     def __getitem__(self, idx):
-        sequence = self.sequences[idx]
-        raw_sequence = self.raw_sequences[idx]
-        mask = torch.ones(*sequence.shape[:-1], 1)
-        num_tokens_to_mask = int(self.sequence_length * self.mask_ratio)
-        mask_indices = np.random.choice(self.sequence_length, num_tokens_to_mask, replace=False)
+        label =  self.labels[idx]
+        sequence = self.sequences[idx] # 67-dim
+        mask = torch.ones(*sequence.shape[:-1], 1) # trajectory_len, 1
+        num_tokens_to_mask = int(self.true_sequence_length[idx] * self.mask_ratio)
+        mask_indices = np.random.choice(self.true_sequence_length[idx], num_tokens_to_mask, replace=False)
         mask[mask_indices] = 0.
-        in_sequence = sequence*mask
-        out_sequence = sequence*(1-mask)
-        return in_sequence, out_sequence, (1-mask).squeeze(-1), sequence, raw_sequence
+        in_sequence = sequence.clone()*mask
+        out_sequence = sequence.clone()*(1-mask)
+        return in_sequence, out_sequence, (1-mask).squeeze(-1), sequence, self.true_sequence_length[idx], label
 
 class DynamicsDataset(Dataset):
     def __init__(self, config):
@@ -98,13 +125,8 @@ class DynamicsDataset(Dataset):
         self.Xnext = np.vstack(Xnext)
         assert len(self.Xt) == len(self.Xnext), "Xt and Xnext must have the same length"
 
-        # Normalize the data
-        if config['use_limits']:
-            raise NotImplementedError
-        else:
-            # Get bounds from the max of both Xt and Xnext
-            self.X_min = np.min(np.concatenate((self.Xt, self.Xnext), axis=0), axis=0)
-            self.X_max = np.max(np.concatenate((self.Xt, self.Xnext), axis=0), axis=0)
+        self.X_min = np.loadtxt(os.path.join(config['model_dir'], 'min_val.txt'))
+        self.X_max = np.loadtxt(os.path.join(config['model_dir'], 'max_val.txt'))
 
         for i in range(self.X_min.shape[0]):
             if np.abs(self.X_min[i] - self.X_max[i]) < 1e-6:
@@ -115,13 +137,13 @@ class DynamicsDataset(Dataset):
         self.Xt = (self.Xt - self.X_min) / (self.X_max - self.X_min)
         self.Xnext = (self.Xnext - self.X_min) / (self.X_max - self.X_min)
 
-        # If model_dir does nto exist, create it
-        if not os.path.exists(config['model_dir']):
-            os.makedirs(config['model_dir'])
+        # # If model_dir does nto exist, create it
+        # if not os.path.exists(config['model_dir']):
+        #     os.makedirs(config['model_dir'])
 
-        # Write the normalization parameters to a file
-        np.savetxt(os.path.join(config['model_dir'], 'X_min.txt'), self.X_min, delimiter=',')
-        np.savetxt(os.path.join(config['model_dir'], 'X_max.txt'), self.X_max, delimiter=',')
+        # # Write the normalization parameters to a file
+        # np.savetxt(os.path.join(config['model_dir'], 'X_min.txt'), self.X_min, delimiter=',')
+        # np.savetxt(os.path.join(config['model_dir'], 'X_max.txt'), self.X_max, delimiter=',')
 
         # Convert to torch tensors
         self.Xt = torch.from_numpy(self.Xt).float()

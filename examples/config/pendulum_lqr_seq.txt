@@ -6,7 +6,7 @@
     'low_dims': 2,
     'step': 1,
     'subsample': 1,
-    'epochs': 50,
+    'epochs': 100,
     'patience': 50,
     'batch_size': 1024,
     'learning_rate': 0.00025,
@@ -16,11 +16,16 @@
     'model_dir': 'models/pendulum_lqr5k/',
     'log_dir': 'logs/pendulum_lqr5k/',
     'output_dir': 'output/pendulum_lqr5k/2',
+    'labels_fname': 'data/pendulum_lqrk5k_success.txt',
+    'mode': 'eval',
+    'train_sequence': True,
+    'train_dynamics': False,
+    'load_seq_model': 'encoder.pt',
+    'load_dyn_model': 'dynamics_model.pt',
     'input_size': 4,
     'embed_size': 2,
     'hidden_size': 16,
     'num_heads': 2,
-    'max_sequence_length': 502,
     'num_layers': 2,
-    'mask_ratio': 0.5
+    'mask_ratio': 0.25
 }
